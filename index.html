@@ -1,0 +1,1030 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>全国云量预报地图 · 近期11天</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root{
+    --paper: rgb(245,246,242);
+    --ink: #111;
+    --ink-2: #666;
+    --ink-3: #888;
+    --accent: #ffca34;          /* golden yellow — play / active */
+    --accent-2: #FF5F1F;        /* orange — highlights */
+    --line: #d9d9d4;
+    --card: #ffffff;
+  }
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{ height:100%; overflow:hidden; }
+  body{
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    font-feature-settings: "tnum";
+  }
+  #map{ position:fixed; inset:0; background: var(--paper); z-index:0; }
+
+  /* ---------- title chip ---------- */
+  .title-chip{
+    position:fixed; top:12px; left:12px; z-index:1000;
+    display:flex; align-items:center; gap:8px;
+    background:rgba(255,255,255,.92); backdrop-filter:blur(6px);
+    border:1px solid var(--line); border-radius:6px; padding:6px 10px;
+  }
+  .title-chip .logo{
+    width:18px; height:18px; border-radius:50%;
+    background: radial-gradient(circle at 50% 45%, var(--accent) 0 42%, #3a4a5c 44% 100%);
+    flex:none;
+  }
+  .title-chip h1{ font-size:13.5px; font-weight:600; letter-spacing:.01em; white-space:nowrap; }
+
+  /* ---------- floating panel ---------- */
+  .panel{
+    position:fixed; z-index:900; top:64px; right:16px;
+    width:330px; max-height:calc(100vh - 70px); overflow-y:auto;
+    background:var(--card); border:1px solid var(--line); border-radius:7px;
+    padding:14px 16px 12px;
+    scrollbar-width:thin;
+  }
+  .panel .date-big{
+    font-size:34px; font-weight:700; line-height:1.1; letter-spacing:-0.01em;
+  }
+  .panel .date-sub{ font-size:12px; color:var(--ink-3); letter-spacing:.06em; margin-top:4px; text-transform:uppercase; }
+  .mean-row{ display:flex; align-items:baseline; gap:8px; margin:10px 0 2px; }
+  .mean-row .num{ font-size:26px; font-weight:700; }
+  .mean-row .lab{ font-size:12px; color:var(--ink-2); }
+  .mean-desc{ font-size:12px; color:var(--ink-2); margin-bottom:8px; line-height:1.55; }
+
+  .legend{ margin:6px 0 14px; }
+  .legend .bar{
+    height:10px; border-radius:5px; border:1px solid rgba(0,0,0,.15);
+    background:linear-gradient(90deg,#f6cf45 0%, #c8b98f 25%, #a8b0b8 50%, #6e7f90 75%, #31404f 100%);
+  }
+  .legend .ticks{ display:flex; justify-content:space-between; font-size:11px; color:var(--ink-2); margin-top:4px; }
+
+  .sec-title{
+    font-size:11px; color:var(--ink-3); letter-spacing:.08em; text-transform:uppercase;
+    border-top:1px dashed var(--ink); padding-top:8px; margin-top:8px; margin-bottom:4px;
+  }
+  .rank{ font-size:12.5px; line-height:1.9; }
+  .rank .row{ display:flex; justify-content:space-between; gap:8px; }
+  .rank .row .n{ color:var(--ink); }
+  .rank .row .v{ color:var(--ink-2); }
+  .rank .row.sun .v{ color:#b8860b; }
+  .rank .row.cloud .v{ color:#3d5068; }
+
+  .note{ font-size:11px; color:var(--ink-3); line-height:1.6; border-top:1px dashed var(--ink); padding-top:10px; margin-top:12px; }
+  .fetch-time{ font-size:10.5px; color:var(--ink-3); text-align:center; margin-top:10px; }
+
+  /* ---------- city detail ---------- */
+  .city-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .xbtn{
+    flex:none; width:26px; height:26px; padding:0;
+    border:none; background:transparent; color:var(--ink-3);
+    font-size:19px; line-height:1; cursor:pointer; transition:color .15s;
+  }
+  .xbtn:hover{ color:var(--ink); }
+  .bars{ display:flex; align-items:flex-end; gap:3px; height:92px; margin:4px 0 2px; }
+  .bar-col{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; cursor:pointer; }
+  .bar-col .bar-v{ font-size:8.5px; color:var(--ink-2); }
+  .bar-col .bar-b{ width:100%; min-height:2px; border-radius:2px 2px 0 0; transition:outline .1s; }
+  .bar-col .bar-d{ font-size:9px; color:var(--ink-3); margin-top:3px; }
+  .bar-col .bar-w{ font-size:8px; color:var(--ink-2); line-height:1.2; white-space:nowrap; }
+  .bar-col:hover .bar-b{ outline:1.5px solid var(--ink); }
+  .bar-col.on .bar-b{ outline:2px solid var(--accent-2); }
+  .bar-col.on .bar-d{ color:var(--ink); font-weight:700; }
+  .bars-note{ font-size:10.5px; color:var(--ink-3); text-align:center; margin-bottom:8px; }
+  .readout{
+    font-size:11px; color:var(--ink); background:#f6f4ec; border:1px solid var(--line);
+    border-radius:4px; padding:3px 7px; margin:2px 0 4px; white-space:nowrap; overflow:hidden;
+    text-overflow:ellipsis; min-height:21px; font-feature-settings:"tnum";
+  }
+  .pstrip{ display:flex; gap:3px; align-items:flex-end; margin:1px 0 4px; }
+  .pstrip .pcell{ flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; }
+  .pstrip .pv{ font-size:7.5px; color:#3a6ea8; line-height:1.25; white-space:nowrap; font-feature-settings:"tnum"; }
+  .pstrip .pb{ width:58%; background:#4a8fd4; border-radius:1.5px 1.5px 0 0; opacity:.85; }
+  #hourlyChart{ position:relative; }
+  .htip{
+    position:absolute; z-index:5; transform:translate(-50%,-100%);
+    background:#111; color:#fff; font-size:10.5px; line-height:1.4;
+    padding:4px 7px; border-radius:4px; white-space:nowrap; pointer-events:none;
+    font-feature-settings:"tnum";
+  }
+  .htip::after{
+    content:""; position:absolute; top:100%; left:50%; transform:translateX(-50%);
+    border:4px solid transparent; border-top-color:#111;
+  }
+  /* 逐时天气分段标注带（24列太窄，相同天气合并显示；窄分段用双行文字） */
+  .wxband{ display:flex; gap:1px; height:20px; margin:1px 0 0; }
+  .wxband .wxseg{ display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:1.5px; }
+  .wxband .wxseg span{ font-size:7px; color:rgba(17,17,17,.65); white-space:nowrap; line-height:1.15; text-align:center; }
+  .wxband .wxseg span.two{ white-space:normal; }
+  .rec{ background:#fdf6e0; border:1px solid rgba(255,202,52,.6); border-radius:4px; padding:5px 8px; }
+
+  /* ---------- toggles ---------- */
+  .toggles{ position:fixed; z-index:900; top:84px; left:12px; display:flex; gap:8px; }
+  .spot-toggle{
+    display:flex; align-items:center; gap:6px;
+    background:#fff; border:1px solid var(--line); border-radius:6px;
+    padding:6px 10px; font-size:12px; cursor:pointer; user-select:none;
+  }
+  .spot-toggle input{ accent-color:#FF5F1F; cursor:pointer; }
+  .spot-toggle i{ font-style:normal; color:var(--ink-3); margin-left:2px; }
+
+  /* ---------- vertical color legend ---------- */
+  .vlegend{
+    position:fixed; z-index:850; left:12px; bottom:96px;
+    background:#fff; border:1px solid var(--line); border-radius:6px;
+    padding:6px 5px;
+    display:flex; flex-direction:column; align-items:center; gap:5px;
+  }
+  .vlegend span{ font-size:10px; color:var(--ink-2); line-height:1; }
+  .vlegend .vbar{
+    position:relative;
+    width:10px; height:104px; border-radius:5px; border:1px solid rgba(0,0,0,.15);
+    background:linear-gradient(to top,#f6cf45 0%, #c8b98f 25%, #a8b0b8 50%, #6e7f90 75%, #31404f 100%);
+  }
+  /* 悬停联动指示标（仿 ECharts visualMap calculable 手柄） */
+  .vind{
+    display:none; position:absolute; left:-3px; right:-3px; top:50%;
+    transform:translateY(-50%); pointer-events:none; transition:top .12s ease-out;
+  }
+  .vind .vline{
+    position:absolute; left:0; right:0; top:-1px; height:2px;
+    background:#fff; box-shadow:0 0 0 1px rgba(17,17,17,.85); border-radius:1px;
+  }
+  .vind .vval{
+    position:absolute; left:calc(100% + 8px); top:0; transform:translateY(-50%);
+    background:#111; color:#fff; font-size:10px; line-height:1; padding:3px 5px;
+    border-radius:3px; white-space:nowrap; font-feature-settings:"tnum";
+  }
+  .vind .vval::before{
+    content:""; position:absolute; right:100%; top:50%; transform:translateY(-50%);
+    border:3.5px solid transparent; border-right-color:#111;
+  }
+
+  /* ---------- search ---------- */
+  .search-box{
+    position:fixed; z-index:1100; top:12px; right:14px;
+    width:260px;
+    background:#fff; border:1px solid var(--line); border-radius:6px;
+    display:flex; align-items:center; gap:6px; padding:0 10px;
+  }
+  .search-box svg{ flex:none; }
+  .search-box input{
+    border:none; outline:none; height:31px; flex:1; min-width:0;
+    font-size:12.5px; font-family:inherit; background:transparent; color:var(--ink);
+  }
+  .search-results{
+    position:absolute; top:35px; left:-1px; right:-1px;
+    background:#fff; border:1px solid var(--line); border-radius:6px;
+    max-height:300px; overflow-y:auto; box-shadow:0 6px 20px rgba(0,0,0,.1);
+  }
+  .sr-item{
+    display:flex; justify-content:space-between; align-items:center; gap:8px;
+    padding:8px 10px; font-size:12.5px; cursor:pointer;
+  }
+  .sr-item + .sr-item{ border-top:1px solid #f0f0ea; }
+  .sr-item:hover, .sr-item.active{ background:#f6f4ec; }
+  .sr-item .sr-cloud{ font-size:11px; color:var(--ink-2); font-feature-settings:"tnum"; }
+  .sr-item .tag{
+    flex:none; font-size:10px; border-radius:3px; padding:1px 5px; line-height:1.4;
+  }
+  .sr-item .tag.spot{ color:#FF5F1F; border:1px solid rgba(255,95,31,.45); }
+  .sr-item .tag.city{ color:var(--ink-3); border:1px solid var(--line); }
+  .sr-empty{ padding:10px; font-size:12px; color:var(--ink-3); text-align:center; }
+  #hourlyChart .hbars{ height:62px; gap:1px; margin:2px 0 0; }
+  #hourlyChart .pstrip{ gap:1px; margin-top:1px; }
+  #hourlyChart .pstrip .pb{ width:80%; }
+  #hourlyChart .pstrip .pv{ font-size:6.5px; }
+  #hourlyChart .hbars .bar-b{ border-radius:1.5px 1.5px 0 0; }
+  #hourlyChart .hbars .bar-v{ display:none; }
+  #hourlyChart .hbars .bar-col:hover .bar-b{ outline:1px solid var(--ink); }
+  #hourlyChart .hlabels{ position:relative; height:12px; margin-top:2px; }
+  #hourlyChart .hlabels span{
+    position:absolute; transform:translateX(-50%);
+    font-size:8px; color:var(--ink-3); white-space:nowrap; line-height:1.2;
+  }
+
+  /* ---------- top time slider ---------- */
+  .dock{
+    position:fixed; z-index:1000; left:50%; transform:translateX(-50%);
+    top:12px; width:min(640px, calc(100vw - 620px));
+    background:var(--card); border:1px solid var(--line); border-radius:7px;
+    padding:14px 16px 10px;
+    display:flex; align-items:center; gap:16px;
+  }
+  .play-btn{
+    flex:none; width:44px; height:44px; border-radius:50%; border:none; cursor:pointer;
+    background:var(--accent); display:flex; align-items:center; justify-content:center;
+    transition:transform .1s ease-in-out, background .2s;
+  }
+  .play-btn:hover{ transform:scale(1.06); }
+  .play-btn:active{ transform:scale(.96); }
+  .play-btn svg{ width:18px; height:18px; fill:#111; }
+  .slider-wrap{ flex:1; position:relative; height:40px; }
+  .track{
+    position:absolute; left:0; right:0; top:19px; height:6px; border-radius:3px;
+    background:#e6e6e0; cursor:pointer;
+  }
+  .track .fill{
+    position:absolute; left:0; top:0; bottom:0; width:0%;
+    background:var(--accent); border-radius:3px;
+  }
+  .handle{
+    position:absolute; top:50%; width:20px; height:20px; margin-left:-10px;
+    transform:translateY(-50%);
+    border-radius:50%; background:#fff; border:2.5px solid var(--ink); cursor:grab;
+    z-index:2; touch-action:none;
+  }
+  .handle:active{ cursor:grabbing; }
+  .day-labels{ position:absolute; left:0; right:0; top:32px; height:14px; }
+  .day-labels span{
+    position:absolute; transform:translateX(-50%);
+    font-size:10.5px; color:var(--ink-3); white-space:nowrap;
+  }
+  .day-labels span.on{ color:var(--ink); font-weight:700; }
+  .cur-date{
+    flex:none; min-width:86px; text-align:right;
+    font-size:14px; font-weight:600;
+  }
+  .cur-date small{ display:block; font-size:10.5px; font-weight:400; color:var(--ink-3); letter-spacing:.05em; }
+
+  .leaflet-container{ background: var(--paper); font-family:inherit; }
+  .city-tip{
+    background:#111; color:#fff; border:none; border-radius:4px;
+    font-size:12px; padding:4px 8px; box-shadow:none;
+  }
+  .city-tip::before{ display:none; }
+
+  @media (max-width: 920px){
+    .title-chip{ top:8px; left:8px; padding:5px 8px; }
+    .title-chip h1{ font-size:12.5px; }
+    .search-box{ top:8px; left:158px; right:8px; width:auto; }
+    .dock{ top:50px; left:8px; right:8px; transform:none; width:auto; gap:10px; padding:10px 12px 8px; }
+    .toggles{ top:118px; left:8px; }
+    .panel{ top:160px; right:8px; left:8px; width:auto; max-height:calc(100vh - 168px); }
+    .panel .date-big{ font-size:26px; }
+    .cur-date{ min-width:70px; font-size:12px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div class="toggles">
+  <label class="spot-toggle"><input type="checkbox" id="spotToggle" checked><span>景点</span></label>
+  <label class="spot-toggle"><input type="checkbox" id="panelToggle"><span>全国概况</span></label>
+</div>
+
+<div class="vlegend">
+  <span>阴</span>
+  <div class="vbar"><div class="vind" id="vInd"><div class="vline"></div><div class="vval">–</div></div></div>
+  <span>晴</span>
+</div>
+
+<div class="search-box">
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#888" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.5" y1="15.5" x2="21" y2="21"/></svg>
+  <input id="searchInput" type="text" placeholder="搜索城市或景点…" autocomplete="off">
+  <div class="search-results" id="searchResults" style="display:none"></div>
+</div>
+
+<div class="title-chip">
+  <div class="logo"></div>
+  <h1>全国云量预报地图</h1>
+</div>
+
+<div class="panel" style="display:none">
+  <div id="cityView" style="display:none">
+    <div class="city-head">
+      <div>
+        <div class="date-big" id="cityName" style="font-size:26px"></div>
+        <div class="date-sub" id="cityDateRange">近期11天 · 云量 / 天气 / 降水</div>
+      </div>
+      <button id="cityClose" class="xbtn" title="返回全国概览">×</button>
+    </div>
+    <div class="readout" id="cityReadout">悬停查看每日详情 · 点击柱状图跳转日期</div>
+    <div class="bars" id="cityBars"></div>
+    <div class="pstrip" id="cityPstrip" title="每日降水量"></div>
+    <div class="mean-row">
+      <span class="num" id="cityMean">–</span>
+      <span class="lab">% 11天平均云量</span>
+    </div>
+    <div class="mean-desc" id="cityBest"></div>
+  </div>
+  <div id="spotView" style="display:none">
+    <div class="city-head">
+      <div>
+        <div class="date-big" id="spotName" style="font-size:26px"></div>
+        <div class="date-sub">自然景点 · 逐小时云量预报</div>
+      </div>
+      <button id="spotClose" class="xbtn" title="返回全国概览">×</button>
+    </div>
+    <div class="mean-desc rec" id="spotRecommend" style="margin:6px 0 2px"></div>
+    <div class="sec-title" style="border-top:none;padding-top:8px;margin-top:4px" id="spotDayLabel">逐小时云量</div>
+    <div id="hourlyChart"></div>
+    <div class="mean-desc" id="spotHourStat" style="margin-top:4px"></div>
+    <div class="sec-title">近11天 · 每日云量</div>
+    <div class="readout" id="spotReadout">悬停或点击柱状图查看数值</div>
+    <div class="bars" id="spotBars" style="height:84px;margin-top:2px"></div>
+    <div class="pstrip" id="spotPstrip" title="每日降水量"></div>
+  </div>
+  <div id="overviewView">
+  <div class="city-head">
+    <div>
+      <div class="date-big" id="dateBig">10月1日</div>
+      <div class="date-sub" id="dateSub">星期四 · 2026-10-01</div>
+    </div>
+    <button id="ovClose" class="xbtn" title="关闭">×</button>
+  </div>
+  <div class="mean-row">
+    <span class="num" id="meanNum">–</span>
+    <span class="lab">% 全国城市平均云量</span>
+  </div>
+  <div class="mean-desc" id="meanDesc"></div>
+  <div class="legend">
+    <div class="bar"></div>
+    <div class="ticks"><span>0% 晴</span><span>25</span><span>50</span><span>75</span><span>100% 阴</span></div>
+  </div>
+  <div class="sec-title">当日最晴省份 · 适合出游</div>
+  <div class="rank" id="sunRank"></div>
+  <div class="sec-title">当日最阴省份 · 云量最高</div>
+  <div class="rank" id="cloudRank"></div>
+  <div class="note">
+    区域颜色越金黄，云量越低；越深蓝灰，云层越厚。
+    点击地图可查看近期11天详细预报。
+    云量为全天地总云量平均值。7天以后的预报不确定性较大，出行前请复核最新预报。
+  </div>
+  <div class="fetch-time" id="fetchTime"></div>
+  <div class="fetch-time">制作人：唐昌林。需求及问题反馈：todd2jie@163.com</div>
+  </div><!-- /overviewView -->
+</div>
+
+<div class="dock">
+  <button class="play-btn" id="playBtn" title="播放 / 暂停">
+    <svg id="playIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+  </button>
+  <div class="slider-wrap">
+    <div class="track" id="track">
+      <div class="fill" id="fill"></div>
+      <div class="handle" id="handle"></div>
+    </div>
+    <div class="day-labels" id="dayLabels"></div>
+  </div>
+  <div class="cur-date" id="curDate">10月1日<small>DAY 1 / 11</small></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const WEEKDAYS = ["星期日","星期一","星期二","星期三","星期四","星期五","星期六"];
+const DAY_MS = 1100;           // 播放时每天的时长
+let DATA = null, CITY_GEO = null, CHINA = null, SPOTS = [], spotMarkers = [], areas = [], dayFloat = 0, playing = false, rafId = null, selectedCity = null, selectedLayer = null, selectedSpot = null, selectedSpotMarker = null;
+
+/* 云量配色：金黄(晴) → 灰 → 深蓝灰(阴) */
+const STOPS = [[0,[246,207,69]],[25,[200,185,143]],[50,[168,176,184]],[75,[110,127,144]],[100,[49,64,79]]];
+function cloudColor(c){
+  c = Math.max(0, Math.min(100, c));
+  for(let i=0;i<STOPS.length-1;i++){
+    const [p0,rgb0] = STOPS[i], [p1,rgb1] = STOPS[i+1];
+    if(c >= p0 && c <= p1){
+      const t = (c - p0) / (p1 - p0);
+      const r = Math.round(rgb0[0]+(rgb1[0]-rgb0[0])*t);
+      const g = Math.round(rgb0[1]+(rgb1[1]-rgb0[1])*t);
+      const b = Math.round(rgb0[2]+(rgb1[2]-rgb0[2])*t);
+      return `rgb(${r},${g},${b})`;
+    }
+  }
+  return "rgb(49,64,79)";
+}
+const cloudWord = c => c<=20 ? "晴" : c<=50 ? "少云" : c<=80 ? "多云" : "阴";
+/* WMO 天气代码 → 中文 */
+const WMAP = {0:"晴",1:"少云",2:"多云",3:"阴",45:"雾",48:"雾",51:"毛毛雨",53:"毛毛雨",55:"毛毛雨",56:"冻雨",57:"冻雨",61:"小雨",63:"中雨",65:"大雨",66:"冻雨",67:"冻雨",71:"小雪",73:"中雪",75:"大雪",77:"雪",80:"阵雨",81:"阵雨",82:"暴雨",85:"阵雪",86:"阵雪",95:"雷暴",96:"雷暴",99:"雷暴"};
+const wtext = c => WMAP[c] || "多云";
+const fmtD = i => `${parseInt(DATA.dates[i].slice(5,7))}月${parseInt(DATA.dates[i].slice(8,10))}日`;
+/* 景点某日：降水总量 / 主导天气（由逐时数据汇总） */
+const dayPrecipSpot = (s,i) => s.precip ? s.precip.slice(i*24, i*24+24).reduce((a,b)=>a+b, 0) : 0;
+function dayWeatherSpot(s, i){
+  if(!s.wcode) return 2;
+  const ws = s.wcode.slice(i*24, i*24+24), cnt = {};
+  ws.forEach(w=>cnt[w]=(cnt[w]||0)+1);
+  return +Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0][0];
+}
+
+const map = L.map("map", {
+  center:[34.5, 106], zoom:4.2, minZoom:3, maxZoom:9,
+  zoomControl:false, attributionControl:false, zoomSnap:0.2
+});
+L.control.zoom({position:"bottomleft"}).addTo(map);
+// 景点独立图层，避免行政区 hover 置顶后遮挡点击
+map.createPane("spotsPane");
+map.getPane("spotsPane").style.zIndex = 450;
+// 省界描边图层：城市填色之上、景点之下
+map.createPane("provPane");
+map.getPane("provPane").style.zIndex = 420;
+
+Promise.all([fetch("data.json").then(r=>r.json()), fetch("china.json").then(r=>r.json()), fetch("cities_geo.json").then(r=>r.json()), fetch("spots.json").then(r=>r.json())])
+  .then(([d, china, citiesGeo, spots])=>{
+    DATA = d;
+    CHINA = china;
+    L.geoJSON(china, {
+      style:{ color:"#c4c4ba", weight:1, fillColor:"#eeeeE7", fillOpacity:1 },
+      interactive:false
+    }).addTo(map);
+    CITY_GEO = citiesGeo;
+    SPOTS = spots;
+    init();
+  });
+
+function init(){
+  // 行政边界填色
+  const cloudByName = {};
+  DATA.cities.forEach(c => cloudByName[c.name] = c.cloud);
+  const areaLayer = L.geoJSON(CITY_GEO, {
+    style: f => {
+      const cl = cloudByName[f.properties.name];
+      return {
+        fillColor: cl ? cloudColor(cl[0]) : "#e5e5de",
+        color: "rgba(255,255,255,.85)", weight: 0.6,
+        fillOpacity: 1, opacity: 1
+      };
+    },
+    onEachFeature: (f, layer) => {
+      const cloud = cloudByName[f.properties.name];
+      if (!cloud) return;
+      const name = f.properties.name;
+      areas.push({layer, name, cloud});
+      layer.bindTooltip(
+        `<b>${name}</b><br>云量 ${cloud[0]}% · ${cloudWord(cloud[0])}`,
+        {className:"city-tip", direction:"top", sticky:true}
+      );
+      layer.on({
+        mouseover: ()=>{
+          if(layer !== selectedLayer){ layer.setStyle({weight:1.6, color:"#111"}); }
+          layer.bringToFront();
+          // 悬停时按当前时间轴位置刷新提示内容（避免停留在第1天数据）
+          const v = curVal(cloud);
+          layer.getTooltip().setContent(`<b>${name}</b><br>云量 ${Math.round(v)}% · ${cloudWord(v)}`);
+          hoverCloud = cloud; refreshLegendInd();
+        },
+        mouseout: ()=>{ if(layer !== selectedLayer) layer.setStyle({weight:0.6, color:"rgba(255,255,255,.85)"}); hoverCloud = null; refreshLegendInd(); },
+        click: ()=> showCity(name, cloud)
+      });
+    }
+  }).addTo(map);
+
+  // 省界描边（叠在城市填色之上）
+  L.geoJSON(CHINA, {
+    pane:"provPane",
+    style:{ color:"rgba(17,17,17,.85)", weight:1.3, fill:false, fillOpacity:0 },
+    interactive:false
+  }).addTo(map);
+
+  // 自然景点标记（地理半径，随地图缩放；含最小像素保护）
+  const spotLayer = L.layerGroup().addTo(map);
+  SPOTS.forEach(s=>{
+    const tip = `<b>${s.name}</b><br>云量 ${s.daily[0]}% · ${cloudWord(s.daily[0])} · 点击查看逐小时预报`;
+    const halo = L.circle([s.lat, s.lon], {   // 固定像素白色外框（1.3px，同省界粗细），兼作点击区
+      radius:6800, pane:"spotsPane",
+      color:"rgba(255,255,255,.95)", weight:1.3, fill:false, fillOpacity:0,
+      bubblingMouseEvents:false
+    });
+    const m = L.circle([s.lat, s.lon], {
+      radius:4000, pane:"spotsPane",
+      fillColor:cloudColor(s.daily[0]),
+      color:"rgba(17,17,17,.7)", weight:0.8, fillOpacity:0.95,
+      bubblingMouseEvents:false
+    });
+    halo.bindTooltip(tip, {className:"city-tip", direction:"top", offset:[0,-4], sticky:true});
+    m.bindTooltip(tip, {className:"city-tip", direction:"top", offset:[0,-4], sticky:true});
+    const open = ()=>{ stopPlay(); showSpot(s); };
+    const hov = ()=>{
+      // 悬停时按当前时间轴位置刷新提示内容
+      const v = curVal(s.daily);
+      const txt = `<b>${s.name}</b><br>云量 ${Math.round(v)}% · ${cloudWord(v)} · 点击查看逐小时预报`;
+      halo.getTooltip().setContent(txt);
+      m.getTooltip().setContent(txt);
+      hoverCloud = s.daily; refreshLegendInd();
+    };
+    const unhov = ()=>{ hoverCloud = null; refreshLegendInd(); };
+    halo.on("click", open);
+    m.on("click", open);
+    halo.on("mouseover", hov); halo.on("mouseout", unhov);
+    m.on("mouseover", hov); m.on("mouseout", unhov);
+    spotLayer.addLayer(halo);
+    spotLayer.addLayer(m);
+    spotMarkers.push({m, halo, s});
+  });
+  function applySpotRadii(){
+    const p1 = map.containerPointToLatLng([0,0]);
+    const p2 = map.containerPointToLatLng([1,0]);
+    const mpp = Math.max(1, p1.distanceTo(p2));   // 米/像素
+    const inner = Math.max(4000, mpp*2);
+    const outer = inner + mpp*1.6;   // 外框紧贴圆点，间距固定约1.6px
+    spotMarkers.forEach(({m, halo})=>{ m.setRadius(inner); halo.setRadius(outer); });
+  }
+  map.on("zoomend", applySpotRadii);
+  applySpotRadii();
+  document.getElementById("spotToggle").addEventListener("change", e=>{
+    e.target.checked ? map.addLayer(spotLayer) : map.removeLayer(spotLayer);
+  });
+  document.getElementById("panelToggle").addEventListener("change", e=>{
+    const p = document.querySelector(".panel");
+    if(e.target.checked){
+      // 三个视图全部隐藏时（如手动关闭详情后），恢复显示全国概况
+      const ov = document.getElementById("overviewView");
+      const cv = document.getElementById("cityView");
+      const sv = document.getElementById("spotView");
+      if([ov, cv, sv].every(v=>v.style.display === "none")) ov.style.display = "block";
+      p.style.display = "";
+    } else {
+      p.style.display = "none";
+    }
+  });
+
+  // 搜索：城市 + 景点
+  const searchIndex = [
+    ...DATA.cities.map(c=>({name:c.name, type:"city", lat:c.lat, lon:c.lon, cloud:c.cloud})),
+    ...SPOTS.map(s=>({name:s.name, type:"spot", lat:s.lat, lon:s.lon, spot:s, cloud:s.daily}))
+  ];
+  const sInput = document.getElementById("searchInput");
+  const sResults = document.getElementById("searchResults");
+  let sMatches = [], sActive = -1;
+  function renderSearch(q){
+    sMatches = searchIndex.filter(x=>x.name.includes(q)).slice(0, 8);
+    sActive = sMatches.length ? 0 : -1;
+    if(!sMatches.length){
+      sResults.innerHTML = `<div class="sr-empty">没有匹配“${q}”的地点</div>`;
+    } else {
+      const day = Math.round(dayFloat);
+      sResults.innerHTML = sMatches.map((x,i)=>{
+        const v = x.cloud[Math.min(day, x.cloud.length-1)];
+        const tag = x.type === "spot" ? `<span class="tag spot">景点</span>` : `<span class="tag city">城市</span>`;
+        return `<div class="sr-item${i===sActive?" active":""}" data-i="${i}">` +
+               `<span>${x.name}</span>` +
+               `<span style="display:flex;align-items:center;gap:6px">` +
+               `<span class="sr-cloud">${v}% ${cloudWord(v)}</span>${tag}</span></div>`;
+      }).join("");
+      sResults.querySelectorAll(".sr-item").forEach(el=>{
+        el.addEventListener("mousedown", e=>{ e.preventDefault(); gotoSearch(sMatches[+el.dataset.i]); });
+      });
+    }
+    sResults.style.display = "block";
+  }
+  function gotoSearch(x){
+    stopPlay();
+    map.flyTo([x.lat, x.lon], 6.5, {duration:0.8});
+    if(x.type === "spot") showSpot(x.spot);
+    else showCity(x.name, x.cloud);
+    sInput.value = "";
+    sResults.style.display = "none";
+    sInput.blur();
+  }
+  sInput.addEventListener("input", ()=>{
+    const q = sInput.value.trim();
+    if(!q){ sResults.style.display = "none"; return; }
+    renderSearch(q);
+  });
+  sInput.addEventListener("focus", ()=>{
+    if(sInput.value.trim()) renderSearch(sInput.value.trim());
+  });
+  sInput.addEventListener("blur", ()=>{ setTimeout(()=>sResults.style.display = "none", 150); });
+  sInput.addEventListener("keydown", e=>{
+    if(!sMatches.length || sResults.style.display === "none"){
+      if(e.key === "Escape") sInput.blur();
+      return;
+    }
+    if(e.key === "ArrowDown"){ sActive = (sActive+1) % sMatches.length; }
+    else if(e.key === "ArrowUp"){ sActive = (sActive-1+sMatches.length) % sMatches.length; }
+    else if(e.key === "Enter"){ if(sActive >= 0) gotoSearch(sMatches[sActive]); return; }
+    else if(e.key === "Escape"){ sResults.style.display = "none"; sInput.blur(); return; }
+    else return;
+    e.preventDefault();
+    sResults.querySelectorAll(".sr-item").forEach((el,i)=>el.classList.toggle("active", i===sActive));
+  });
+
+  // 滑块刻度 + 标签
+  const labels = document.getElementById("dayLabels");
+  const track = document.getElementById("track");
+  DATA.dates.forEach((ds,i)=>{
+    const pct = i/(DATA.dates.length-1)*100;
+    const s = document.createElement("span");
+    s.style.left = pct + "%";
+    s.textContent = (i % 2 === 0 || i === DATA.dates.length-1) ? `${parseInt(ds.slice(5,7))}/${parseInt(ds.slice(8,10))}` : "";
+    s.dataset.i = i;
+    labels.appendChild(s);
+  });
+
+  bindSlider();
+  document.getElementById("playBtn").addEventListener("click", togglePlay);
+  document.getElementById("cityClose").addEventListener("click", closeCity);
+  document.getElementById("spotClose").addEventListener("click", closeSpot);
+  document.getElementById("ovClose").addEventListener("click", ()=>{
+    document.querySelector(".panel").style.display = "none";
+    document.getElementById("panelToggle").checked = false;
+  });
+  render(0);
+  // 支持 #城市名 或 #spot:景点名 直接打开详情
+  const h = decodeURIComponent(location.hash.slice(1));
+  if(h.startsWith("spot:")){
+    const sn = h.slice(5);
+    const sp = SPOTS.find(x=>x.name === sn);
+    if(sp) showSpot(sp);
+  } else if(h && cloudByName[h]) showCity(h, cloudByName[h]);
+}
+
+function openPanel(){
+  document.querySelector(".panel").style.display = "";
+}
+
+/* ---------- 悬停联动图例指示标 ---------- */
+let hoverCloud = null;   // 当前悬停对象的 daily 云量数组（城市或景点）
+/* 当前时间轴位置（含播放插值）对应的数值 */
+function curVal(arr){
+  const i0 = Math.floor(dayFloat), i1 = Math.min(i0+1, DATA.dates.length-1), t = dayFloat - i0;
+  return arr[i0] + (arr[i1]-arr[i0])*t;
+}
+function refreshLegendInd(){
+  const el = document.getElementById("vInd");
+  if(!el) return;
+  if(!hoverCloud || !DATA){ el.style.display = "none"; return; }
+  const i0 = Math.floor(dayFloat), i1 = Math.min(i0+1, DATA.dates.length-1), t = dayFloat - i0;
+  const v = hoverCloud[i0] + (hoverCloud[i1]-hoverCloud[i0])*t;
+  el.style.display = "block";
+  el.style.top = (100 - v) + "%";
+  el.querySelector(".vval").textContent = Math.round(v) + "%";
+}
+
+/* ---------- 城市详情 ---------- */
+function showCity(name, cloud){
+  openPanel();
+  // 关闭景点视图
+  selectedSpot = null;
+  if(selectedSpotMarker){ selectedSpotMarker.setStyle({color:"rgba(17,17,17,.7)", weight:0.8}); selectedSpotMarker = null; }
+  document.getElementById("spotView").style.display = "none";
+  const c = DATA.cities.find(x=>x.name===name) || {name, cloud};
+  selectedCity = c;
+  document.getElementById("cityName").textContent = name;
+  document.getElementById("cityDateRange").textContent =
+    `${fmtD(0)}—${fmtD(DATA.dates.length-1)} · 云量 / 天气 / 降水`;
+  const mean = cloud.reduce((a,b)=>a+b,0)/cloud.length;
+  document.getElementById("cityMean").textContent = mean.toFixed(0);
+  const minV = Math.min(...cloud), maxV = Math.max(...cloud);
+  const bestDay = cloud.indexOf(minV), worstDay = cloud.indexOf(maxV);
+  document.getElementById("cityBest").innerHTML =
+    `最晴：<b>${fmtD(bestDay)}</b>（${minV}%）　·　最阴：<b>${fmtD(worstDay)}</b>（${maxV}%）`;
+  const bars = document.getElementById("cityBars");
+  bars.innerHTML = "";
+  cloud.forEach((v,i)=>{
+    const col = document.createElement("div");
+    col.className = "bar-col";
+    col.dataset.i = i;
+    const w = c.wcode ? wtext(c.wcode[i]) : "";
+    const p = c.precip ? c.precip[i] : 0;
+    col.title = `${fmtD(i)} · ${w} · 云量 ${v}% · 降水 ${p}mm`;
+    col.innerHTML =
+      `<div class="bar-v">${v}</div>` +
+      `<div class="bar-b" style="height:${Math.max(2, v*0.52)}px;background:${cloudColor(v)}"></div>` +
+      `<div class="bar-d">${parseInt(DATA.dates[i].slice(8,10))}</div>` +
+      `<div class="bar-w">${w}</div>`;
+    col.addEventListener("click", ()=>{ stopPlay(); render(i); });
+    col.addEventListener("mouseenter", ()=>{
+      document.getElementById("cityReadout").textContent =
+        `${fmtD(i)} · ${w} · 云量 ${v}% · 降水 ${p}mm`;
+    });
+    col.addEventListener("mouseleave", ()=> markBar(Math.round(dayFloat)));
+    bars.appendChild(col);
+  });
+  // 逐日降水条（带数值）
+  const ps = document.getElementById("cityPstrip");
+  ps.innerHTML = "";
+  (c.precip || new Array(cloud.length).fill(0)).forEach((p,i)=>{
+    const cell = document.createElement("div");
+    cell.className = "pcell";
+    cell.title = `${fmtD(i)} · 降水 ${p}mm`;
+    cell.innerHTML = (p > 0 ? `<div class="pv">${p >= 10 ? Math.round(p) : p}</div>` : `<div class="pv"></div>`) +
+      (p > 0 ? `<div class="pb" style="height:${Math.min(12, 1+p*2)}px"></div>` : "");
+    ps.appendChild(cell);
+  });
+  document.getElementById("overviewView").style.display = "none";
+  document.getElementById("cityView").style.display = "block";
+  if(selectedLayer) selectedLayer.setStyle({weight:0.6, color:"rgba(255,255,255,.85)"});
+  const hit = areas.find(a=>a.name === name);
+  selectedLayer = hit ? hit.layer : null;
+  if(selectedLayer){ selectedLayer.setStyle({weight:2, color:"#FF5F1F"}); selectedLayer.bringToFront(); }
+  markBar(Math.round(dayFloat));
+}
+function closeCity(){
+  selectedCity = null;
+  if(selectedLayer){ selectedLayer.setStyle({weight:0.6, color:"rgba(255,255,255,.85)"}); selectedLayer = null; }
+  document.getElementById("cityView").style.display = "none";
+  if(document.getElementById("panelToggle").checked){
+    document.getElementById("overviewView").style.display = "block";
+  } else {
+    document.querySelector(".panel").style.display = "none";
+  }
+}
+function markBar(day){
+  document.querySelectorAll("#cityBars .bar-col").forEach(c=>{
+    c.classList.toggle("on", +c.dataset.i === day);
+  });
+  const c = selectedCity;
+  if(c && c.wcode) document.getElementById("cityReadout").textContent =
+    `${fmtD(day)} · ${wtext(c.wcode[day])} · 云量 ${c.cloud[day]}% · 降水 ${c.precip[day]}mm`;
+}
+
+/* ---------- 景点详情 ---------- */
+function showSpot(s){
+  openPanel();
+  // 关闭城市视图
+  selectedCity = null;
+  if(selectedLayer){ selectedLayer.setStyle({weight:0.6, color:"rgba(255,255,255,.85)"}); selectedLayer = null; }
+  document.getElementById("cityView").style.display = "none";
+  // 高亮选中景点
+  if(selectedSpotMarker) selectedSpotMarker.setStyle({color:"rgba(17,17,17,.7)", weight:0.8});
+  selectedSpotMarker = (spotMarkers.find(x=>x.s === s)||{}).m || null;
+  if(selectedSpotMarker){ selectedSpotMarker.setStyle({color:"#FF5F1F", weight:2.5}); selectedSpotMarker.bringToFront(); }
+  selectedSpot = s;
+  document.getElementById("spotName").textContent = s.name;
+  // 推荐游玩日期：云量低 + 降水少 综合评分，取前3天
+  const scored = s.daily.map((v,i)=>({i, v, p: dayPrecipSpot(s,i)}));
+  scored.forEach(x=> x.score = x.v + Math.min(15, x.p)*6);
+  const rec = [...scored].sort((a,b)=>a.score-b.score).slice(0,3).sort((a,b)=>a.i-b.i);
+  document.getElementById("spotRecommend").innerHTML =
+    `<b>推荐游玩：</b>` + rec.map(x=>{
+      const w = wtext(dayWeatherSpot(s, x.i));
+      const pTxt = x.p >= 0.5 ? ` · 雨${x.p.toFixed(1)}mm` : "";
+      return `<b>${fmtD(x.i)}</b>（${w} ${x.v}%${pTxt}）`;
+    }).join("　");
+  // 11天柱状图
+  const bars = document.getElementById("spotBars");
+  bars.innerHTML = "";
+  s.daily.forEach((v,i)=>{
+    const col = document.createElement("div");
+    col.className = "bar-col";
+    col.dataset.i = i;
+    const w = wtext(dayWeatherSpot(s, i));
+    const p = dayPrecipSpot(s, i);
+    const info = `${fmtD(i)} · ${w} · 云量 ${v}% · 降水 ${p.toFixed(1)}mm`;
+    col.title = info;
+    col.innerHTML =
+      `<div class="bar-v">${v}</div>` +
+      `<div class="bar-b" style="height:${Math.max(2, v*0.40)}px;background:${cloudColor(v)}"></div>` +
+      `<div class="bar-d">${parseInt(DATA.dates[i].slice(8,10))}</div>` +
+      `<div class="bar-w">${w}</div>`;
+    col.addEventListener("click", ()=>{ stopPlay(); render(i); });
+    col.addEventListener("mouseenter", ()=>{ document.getElementById("spotReadout").textContent = info; });
+    col.addEventListener("mouseleave", ()=> markSpotBar(Math.round(dayFloat)));
+    bars.appendChild(col);
+  });
+  // 逐日降水条（带数值，同城市样式）
+  const sps = document.getElementById("spotPstrip");
+  sps.innerHTML = "";
+  s.daily.forEach((v,i)=>{
+    const p = dayPrecipSpot(s, i);
+    const cell = document.createElement("div");
+    cell.className = "pcell";
+    cell.title = `${fmtD(i)} · 降水 ${p.toFixed(1)}mm`;
+    cell.innerHTML = (p > 0 ? `<div class="pv">${p >= 10 ? Math.round(p) : +p.toFixed(1)}</div>` : `<div class="pv"></div>`) +
+      (p > 0 ? `<div class="pb" style="height:${Math.min(12, 1+p*2)}px"></div>` : "");
+    sps.appendChild(cell);
+  });
+  document.getElementById("overviewView").style.display = "none";
+  document.getElementById("spotView").style.display = "block";
+  const day = Math.round(dayFloat);
+  drawHourly(day);
+  markSpotBar(day);
+}
+function closeSpot(){
+  selectedSpot = null;
+  if(selectedSpotMarker){ selectedSpotMarker.setStyle({color:"rgba(17,17,17,.7)", weight:0.8}); selectedSpotMarker = null; }
+  document.getElementById("spotView").style.display = "none";
+  if(document.getElementById("panelToggle").checked){
+    document.getElementById("overviewView").style.display = "block";
+  } else {
+    document.querySelector(".panel").style.display = "none";
+  }
+}
+function markSpotBar(day){
+  document.querySelectorAll("#spotBars .bar-col").forEach(c=>{
+    c.classList.toggle("on", +c.dataset.i === day);
+  });
+  const s = selectedSpot;
+  if(s) document.getElementById("spotReadout").textContent =
+    `${fmtD(day)} · ${wtext(dayWeatherSpot(s, day))} · 云量 ${s.daily[day]}% · 降水 ${dayPrecipSpot(s, day).toFixed(1)}mm`;
+}
+function drawHourly(day){
+  const s = selectedSpot;
+  const hs = s.hourly.slice(day*24, day*24+24);
+  const ws = s.wcode ? s.wcode.slice(day*24, day*24+24) : new Array(24).fill(2);
+  const pr = s.precip ? s.precip.slice(day*24, day*24+24) : new Array(24).fill(0);
+  const ds = DATA.dates[day];
+  const md = `${parseInt(ds.slice(5,7))}月${parseInt(ds.slice(8,10))}日`;
+  const dd = new Date(+ds.slice(0,4), +ds.slice(5,7)-1, +ds.slice(8,10));
+  document.getElementById("spotDayLabel").textContent = `${md} ${WEEKDAYS[dd.getDay()]} · 逐小时云量与降水`;
+  // 24小时柱状图，颜色与云量配色同步；时刻标签独立一行，不挤压柱高
+  const chart = document.getElementById("hourlyChart");
+  chart.innerHTML = "";
+  // 悬浮信息窗：悬停跟随，点击钉住（悬停与点击为同一窗口）
+  let pinnedH = -1;
+  const tip = document.createElement("div");
+  tip.className = "htip";
+  tip.style.display = "none";
+  const showTip = h => {
+    const barH = Math.max(2, hs[h]*0.54);
+    tip.textContent = `${h}时 · ${wtext(ws[h])} · 云量 ${hs[h]}% · 降水 ${pr[h]}mm`;
+    tip.style.left = Math.max(12, Math.min(88, (h+0.5)/24*100)) + "%";
+    tip.style.top = (62 - barH - 6) + "px";
+    tip.style.display = "block";
+  };
+  const hideTip = ()=>{ if(pinnedH < 0) tip.style.display = "none"; };
+  const wrap = document.createElement("div");
+  wrap.className = "bars hbars";
+  hs.forEach((v,h)=>{
+    const col = document.createElement("div");
+    col.className = "bar-col";
+    col.innerHTML = `<div class="bar-b" style="height:${Math.max(2, v*0.54)}px;background:${cloudColor(v)}"></div>`;
+    col.addEventListener("mouseenter", ()=> showTip(h));
+    col.addEventListener("mouseleave", hideTip);
+    col.addEventListener("click", ()=>{
+      pinnedH = (pinnedH === h) ? -1 : h;
+      if(pinnedH >= 0) showTip(h); else tip.style.display = "none";
+    });
+    wrap.appendChild(col);
+  });
+  const labels = document.createElement("div");
+  labels.className = "hlabels";
+  [0,6,12,18,23].forEach(h=>{
+    const sp = document.createElement("span");
+    sp.style.left = ((h+0.5)/24*100) + "%";
+    sp.textContent = (h===23 ? 24 : h) + "时";
+    labels.appendChild(sp);
+  });
+  // 逐时降水条（蓝色，与柱对齐，带数值）
+  const ps = document.createElement("div");
+  ps.className = "pstrip";
+  pr.forEach((p,h)=>{
+    const cell = document.createElement("div");
+    cell.className = "pcell";
+    cell.title = `${h}时 · 降水 ${p}mm`;
+    cell.innerHTML = (p > 0 ? `<div class="pv">${p >= 10 ? Math.round(p) : p}</div>` : `<div class="pv"></div>`) +
+      (p > 0 ? `<div class="pb" style="height:${Math.min(10, 1+p*2.5)}px"></div>` : "");
+    ps.appendChild(cell);
+  });
+  // 天气按相同时段合并（供标注带与统计行共用）
+  const segs = [];
+  let st = 0;
+  for(let h=1; h<=24; h++){
+    if(h===24 || wtext(ws[h]) !== wtext(ws[st])){ segs.push([st, h, wtext(ws[st])]); st = h; }
+  }
+  // 逐时天气分段标注带（相同天气的连续小时合并成色块并标注文字）
+  const WTINT = {"晴":"rgba(246,207,69,.30)","少云":"rgba(200,185,143,.32)","多云":"rgba(168,176,184,.38)","阴":"rgba(110,127,144,.45)","雾":"rgba(168,176,184,.5)","毛毛雨":"rgba(74,143,212,.25)","小雨":"rgba(74,143,212,.32)","中雨":"rgba(74,143,212,.42)","大雨":"rgba(74,143,212,.52)","暴雨":"rgba(74,143,212,.62)","阵雨":"rgba(74,143,212,.32)","冻雨":"rgba(74,143,212,.42)","小雪":"rgba(120,170,220,.28)","中雪":"rgba(120,170,220,.38)","大雪":"rgba(120,170,220,.48)","雪":"rgba(120,170,220,.32)","阵雪":"rgba(120,170,220,.32)","雷暴":"rgba(120,80,180,.35)"};
+  const band = document.createElement("div");
+  band.className = "wxband";
+  segs.forEach(([a,b,w])=>{
+    const seg = document.createElement("div");
+    seg.className = "wxseg";
+    seg.style.width = ((b-a)/24*100) + "%";
+    seg.style.background = WTINT[w] || "rgba(168,176,184,.35)";
+    seg.title = `${a}—${b}时 · ${w}`;
+    const wPx = (b-a)*12.4;
+    if(wPx >= w.length*7.5 + 3){
+      const sp = document.createElement("span");
+      sp.textContent = w;
+      seg.appendChild(sp);
+    } else if(wPx >= 9){
+      // 窄分段：双行文字
+      const sp = document.createElement("span");
+      sp.className = "two";
+      const k = Math.ceil(w.length/2);
+      sp.innerHTML = w.slice(0,k) + "<br>" + w.slice(k);
+      seg.appendChild(sp);
+    }
+    band.appendChild(seg);
+  });
+  chart.appendChild(tip);
+  chart.appendChild(wrap);
+  chart.appendChild(labels);
+  chart.appendChild(band);
+  chart.appendChild(ps);
+  // 统计：云量 + 天气分段 + 降水
+  const minV = Math.min(...hs), maxV = Math.max(...hs);
+  const mean = hs.reduce((a,b)=>a+b,0)/hs.length;
+  const minH = hs.indexOf(minV);
+  const clear = hs.map((v,h)=>v<=20?h:-1).filter(h=>h>=0);
+  const wxTxt = segs.length <= 4
+    ? segs.map(([a,b,w])=>`${a}—${b}时 ${w}`).join("，")
+    : [...new Set(segs.map(x=>x[2]))].join("转") + "（变化较多）";
+  const pTotal = pr.reduce((a,b)=>a+b,0);
+  const rainH = pr.map((p,h)=>p>=0.2?h:-1).filter(h=>h>=0);
+  const pTxt = pTotal < 0.2 ? "全天无降水"
+    : `降水共 ${pTotal.toFixed(1)}mm，主要在 ${rainH[0]}—${rainH[rainH.length-1]+1}时`;
+  let stat = `当日均值 ${mean.toFixed(0)}% · 最低 ${minV}%（${minH}时）· 最高 ${maxV}%`;
+  stat += `<br>天气：${wxTxt}　·　${pTxt}`;
+  stat += clear.length ? `<br>云量≤20% 的通透时段：${clear[0]}—${clear[clear.length-1]+1}时（共${clear.length}小时）。` : `<br>全天云量较高。`;
+  document.getElementById("spotHourStat").innerHTML = stat;
+}
+
+/* ---------- 渲染 ---------- */
+function render(df){
+  dayFloat = Math.max(0, Math.min(DATA.dates.length-1, df));
+  const i0 = Math.floor(dayFloat), i1 = Math.min(i0+1, DATA.dates.length-1), t = dayFloat - i0;
+  for(const {layer, name, cloud} of areas){
+    const v = cloud[i0] + (cloud[i1]-cloud[i0])*t;
+    layer.setStyle({fillColor: cloudColor(v)});
+    if(layer.isTooltipOpen()){
+      layer.getTooltip().setContent(`<b>${name}</b><br>云量 ${Math.round(v)}% · ${cloudWord(v)}`);
+    }
+  }
+  for(const {m, s} of spotMarkers){
+    const v = s.daily[i0] + (s.daily[i1]-s.daily[i0])*t;
+    m.setStyle({fillColor: cloudColor(v)});
+    if(m.isTooltipOpen()){
+      m.getTooltip().setContent(`<b>${s.name}</b><br>云量 ${Math.round(v)}% · ${cloudWord(v)} · 点击查看逐小时预报`);
+    }
+  }  const day = Math.round(dayFloat);
+  updatePanel(day);
+  updateSliderUI();
+  refreshLegendInd();
+}
+function updatePanel(day){
+  const ds = DATA.dates[day];
+  const d = new Date(+ds.slice(0,4), +ds.slice(5,7)-1, +ds.slice(8,10));
+  const md = `${parseInt(ds.slice(5,7))}月${parseInt(ds.slice(8,10))}日`;
+  document.getElementById("dateBig").textContent = md;
+  document.getElementById("dateSub").textContent =
+    WEEKDAYS[d.getDay()] + " · " + ds;
+  const mean = DATA.dailyMean[day];
+  document.getElementById("meanNum").textContent = mean.toFixed(0);
+  const minMean = Math.min(...DATA.dailyMean);
+  const minDay = DATA.dailyMean.indexOf(minMean);
+  document.getElementById("meanDesc").textContent =
+    `全国总体：${cloudWord(mean)}。相比近11天最晴日（${fmtD(minDay)}，均值${minMean.toFixed(0)}%）` +
+    (Math.abs(mean - minMean) < 0.6 ? "，这就是最晴的一天。" : "。");
+  const sorted = [...(DATA.provinces || DATA.cities)].sort((a,b)=>a.cloud[day]-b.cloud[day]);
+  document.getElementById("sunRank").innerHTML = sorted.slice(0,5).map(c=>
+    `<div class="row sun"><span class="n">${c.name}</span><span class="v">${Math.round(c.cloud[day])}% ${cloudWord(c.cloud[day])}</span></div>`).join("");
+  document.getElementById("cloudRank").innerHTML = sorted.slice(-5).reverse().map(c=>
+    `<div class="row cloud"><span class="n">${c.name}</span><span class="v">${Math.round(c.cloud[day])}% ${cloudWord(c.cloud[day])}</span></div>`).join("");
+  if(DATA.fetchedAt) document.getElementById("fetchTime").textContent =
+    `数据采集时间：${DATA.fetchedAt} · Open-Meteo 预报数据`;
+  const cd = document.getElementById("curDate");
+  cd.innerHTML = `${md}<small>DAY ${day+1} / ${DATA.dates.length}</small>`;
+  document.querySelectorAll(".day-labels span").forEach(s=>{
+    s.classList.toggle("on", +s.dataset.i === day);
+  });
+  if(selectedCity) markBar(day);
+  if(selectedSpot){ drawHourly(day); markSpotBar(day); }
+}
+function updateSliderUI(){
+  const pct = dayFloat/(DATA.dates.length-1)*100;
+  document.getElementById("fill").style.width = pct + "%";
+  document.getElementById("handle").style.left = pct + "%";
+}
+
+/* ---------- 滑块交互 ---------- */
+function bindSlider(){
+  const track = document.getElementById("track");
+  const handle = document.getElementById("handle");
+  let dragging = false;
+  const posToDay = clientX => {
+    const r = track.getBoundingClientRect();
+    return Math.max(0, Math.min(DATA.dates.length-1,
+      (clientX - r.left)/r.width * (DATA.dates.length-1)));
+  };
+  const down = e=>{ dragging = true; stopPlay(); render(posToDay(e.clientX ?? e.touches[0].clientX)); e.preventDefault(); };
+  const move = e=>{ if(dragging) render(posToDay(e.clientX ?? e.touches[0].clientX)); };
+  const up = ()=>{ if(dragging){ dragging=false; render(Math.round(dayFloat)); } };
+  handle.addEventListener("pointerdown", down);
+  track.addEventListener("pointerdown", down);
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+}
+
+/* ---------- 播放 ---------- */
+function togglePlay(){ playing ? stopPlay() : startPlay(); }
+function startPlay(){
+  if(dayFloat >= DATA.dates.length-1) render(0);
+  playing = true;
+  document.getElementById("playIcon").innerHTML = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
+  let last = performance.now();
+  const step = now=>{
+    if(!playing) return;
+    const dt = now - last; last = now;
+    let nf = dayFloat + dt/DAY_MS;
+    if(nf >= DATA.dates.length-1){ nf = DATA.dates.length-1; render(nf); stopPlay(); return; }
+    render(nf);
+    rafId = requestAnimationFrame(step);
+  };
+  rafId = requestAnimationFrame(step);
+}
+function stopPlay(){
+  playing = false;
+  if(rafId) cancelAnimationFrame(rafId);
+  document.getElementById("playIcon").innerHTML = '<path d="M8 5v14l11-7z"/>';
+}
+</script>
+</body>
+</html>
