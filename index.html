@@ -80,6 +80,7 @@
 
   /* ---------- city detail ---------- */
   .city-head{ display:flex; justify-content:space-between; align-items:flex-start; gap:8px; }
+  .leaflet-container .leaflet-interactive:focus{ outline:none !important; }   /* 去掉点击后的矩形焦点框 */
   .xbtn{
     flex:none; width:26px; height:26px; padding:0;
     border:none; background:transparent; color:var(--ink-3);
@@ -131,6 +132,21 @@
     padding:6px 10px; font-size:12px; cursor:pointer; user-select:none;
   }
   .spot-toggle input{ accent-color:#FF5F1F; cursor:pointer; }
+  .addpt-btn{
+    display:flex; align-items:center; gap:6px;
+    background:#fff; border:1px solid var(--line); border-radius:6px;
+    padding:6px 10px; font-size:12px; cursor:pointer; user-select:none;
+    color:var(--ink); font-family:inherit;
+  }
+  .addpt-btn.on{ background:#c2571a; border-color:#c2571a; color:#fff; }
+  #map.pickcursor{ cursor:crosshair !important; }
+  .addpt-pop{ font-size:13px; display:flex; align-items:center; }
+  .addpt-pop input{ width:150px; padding:5px 8px; border:1px solid var(--line); border-radius:5px; font-size:13px; margin-right:6px; }
+  .addpt-pop button{ padding:5px 12px; border:none; border-radius:5px; background:#c2571a; color:#fff; font-size:13px; cursor:pointer; }
+  .toast{ position:fixed; z-index:9999; left:50%; bottom:110px; transform:translateX(-50%);
+    background:rgba(30,30,30,.88); color:#fff; font-size:13px; padding:8px 16px; border-radius:6px;
+    opacity:0; transition:opacity .2s; pointer-events:none; white-space:nowrap; }
+  .toast.show{ opacity:1; }
   .spot-toggle i{ font-style:normal; color:var(--ink-3); margin-left:2px; }
 
   /* ---------- vertical color legend ---------- */
@@ -276,8 +292,9 @@
 <div id="map"></div>
 
 <div class="toggles">
-  <label class="spot-toggle"><input type="checkbox" id="spotToggle" checked><span>景点</span></label>
+  <label class="spot-toggle"><input type="checkbox" id="spotToggle" checked><span>标注点</span></label>
   <label class="spot-toggle"><input type="checkbox" id="panelToggle"><span>全国概况</span></label>
+  <button id="addPointBtn" class="addpt-btn" title="开启后点击地图任意位置添加地点">＋ 地图选点</button>
 </div>
 
 <div class="vlegend">
@@ -288,7 +305,7 @@
 
 <div class="search-box">
   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#888" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.5" y1="15.5" x2="21" y2="21"/></svg>
-  <input id="searchInput" type="text" placeholder="搜索城市或景点…" autocomplete="off">
+  <input id="searchInput" type="text" placeholder="搜索或添加地点…" autocomplete="off">
   <div class="search-results" id="searchResults" style="display:none"></div>
 </div>
 
@@ -319,9 +336,12 @@
     <div class="city-head">
       <div>
         <div class="date-big" id="spotName" style="font-size:26px"></div>
-        <div class="date-sub">自然景点 · 逐小时云量预报</div>
+        <div class="date-sub">逐小时云量预报</div>
       </div>
-      <button id="spotClose" class="xbtn" title="返回全国概览">×</button>
+      <div style="display:flex;align-items:center;flex:none">
+        <button id="spotDel" class="xbtn" title="删除该自定义地点" style="display:none;font-size:12px;width:auto;padding:0 6px">删除</button>
+        <button id="spotClose" class="xbtn" title="返回全国概览">×</button>
+      </div>
     </div>
     <div class="mean-desc rec" id="spotRecommend" style="margin:6px 0 2px"></div>
     <div class="sec-title" style="border-top:none;padding-top:8px;margin-top:4px" id="spotDayLabel">逐小时云量</div>
@@ -381,7 +401,7 @@
 <script>
 const WEEKDAYS = ["星期日","星期一","星期二","星期三","星期四","星期五","星期六"];
 const DAY_MS = 1100;           // 播放时每天的时长
-let DATA = null, CITY_GEO = null, CHINA = null, SPOTS = [], spotMarkers = [], areas = [], dayFloat = 0, playing = false, rafId = null, selectedCity = null, selectedLayer = null, selectedSpot = null, selectedSpotMarker = null;
+let DATA = null, CITY_GEO = null, CHINA = null, SPOTS = [], spotMarkers = [], areas = [], dayFloat = 0, playing = false, rafId = null, selectedCity = null, selectedLayer = null, selectedSpot = null, selectedSpotMarker = null, hlLayer = null, justSelected = false, addMode = false;
 
 /* 云量配色：金黄(晴) → 灰 → 深蓝灰(阴) */
 const STOPS = [[0,[246,207,69]],[25,[200,185,143]],[50,[168,176,184]],[75,[110,127,144]],[100,[49,64,79]]];
@@ -404,7 +424,7 @@ const cloudWord = c => c<=20 ? "晴" : c<=50 ? "少云" : c<=80 ? "多云" : "�
 const WMAP = {0:"晴",1:"少云",2:"多云",3:"阴",45:"雾",48:"雾",51:"毛毛雨",53:"毛毛雨",55:"毛毛雨",56:"冻雨",57:"冻雨",61:"小雨",63:"中雨",65:"大雨",66:"冻雨",67:"冻雨",71:"小雪",73:"中雪",75:"大雪",77:"雪",80:"阵雨",81:"阵雨",82:"暴雨",85:"阵雪",86:"阵雪",95:"雷暴",96:"雷暴",99:"雷暴"};
 const wtext = c => WMAP[c] || "多云";
 const fmtD = i => `${parseInt(DATA.dates[i].slice(5,7))}月${parseInt(DATA.dates[i].slice(8,10))}日`;
-/* 景点某日：降水总量 / 主导天气（由逐时数据汇总） */
+/* 地点某日：降水总量 / 主导天气（由逐时数据汇总） */
 const dayPrecipSpot = (s,i) => s.precip ? s.precip.slice(i*24, i*24+24).reduce((a,b)=>a+b, 0) : 0;
 function dayWeatherSpot(s, i){
   if(!s.wcode) return 2;
@@ -418,12 +438,15 @@ const map = L.map("map", {
   zoomControl:false, attributionControl:false, zoomSnap:0.2
 });
 L.control.zoom({position:"bottomleft"}).addTo(map);
-// 景点独立图层，避免行政区 hover 置顶后遮挡点击
+// 地点独立图层，避免行政区 hover 置顶后遮挡点击
 map.createPane("spotsPane");
 map.getPane("spotsPane").style.zIndex = 450;
-// 省界描边图层：城市填色之上、景点之下
+// 省界描边图层：城市填色之上、地点之下
 map.createPane("provPane");
 map.getPane("provPane").style.zIndex = 420;
+// 选中高亮描边图层：省界之上、地点之下
+map.createPane("hlPane");
+map.getPane("hlPane").style.zIndex = 445;
 
 Promise.all([fetch("data.json").then(r=>r.json()), fetch("china.json").then(r=>r.json()), fetch("cities_geo.json").then(r=>r.json()), fetch("spots.json").then(r=>r.json())])
   .then(([d, china, citiesGeo, spots])=>{
@@ -455,7 +478,7 @@ function init(){
       const cloud = cloudByName[f.properties.name];
       if (!cloud) return;
       const name = f.properties.name;
-      areas.push({layer, name, cloud});
+      areas.push({layer, name, cloud, feature:f});
       layer.bindTooltip(
         `<b>${name}</b><br>云量 ${cloud[0]}% · ${cloudWord(cloud[0])}`,
         {className:"city-tip", direction:"top", sticky:true}
@@ -470,7 +493,7 @@ function init(){
           hoverCloud = cloud; refreshLegendInd();
         },
         mouseout: ()=>{ if(layer !== selectedLayer) layer.setStyle({weight:0.6, color:"rgba(255,255,255,.85)"}); hoverCloud = null; refreshLegendInd(); },
-        click: ()=> showCity(name, cloud)
+        click: ()=>{ if(addMode) return; showCity(name, cloud); }
       });
     }
   }).addTo(map);
@@ -482,9 +505,9 @@ function init(){
     interactive:false
   }).addTo(map);
 
-  // 自然景点标记（地理半径，随地图缩放；含最小像素保护）
+  // 自然地点标记（地理半径，随地图缩放；含最小像素保护）
   const spotLayer = L.layerGroup().addTo(map);
-  SPOTS.forEach(s=>{
+  function addSpotMarker(s){
     const tip = `<b>${s.name}</b><br>云量 ${s.daily[0]}% · ${cloudWord(s.daily[0])} · 点击查看逐小时预报`;
     const halo = L.circle([s.lat, s.lon], {   // 固定像素白色外框（1.3px，同省界粗细），兼作点击区
       radius:6800, pane:"spotsPane",
@@ -494,12 +517,12 @@ function init(){
     const m = L.circle([s.lat, s.lon], {
       radius:4000, pane:"spotsPane",
       fillColor:cloudColor(s.daily[0]),
-      color:"rgba(17,17,17,.7)", weight:0.8, fillOpacity:0.95,
+      color:"rgba(0,0,0,0)", weight:0, fillOpacity:0.95,
       bubblingMouseEvents:false
     });
     halo.bindTooltip(tip, {className:"city-tip", direction:"top", offset:[0,-4], sticky:true});
     m.bindTooltip(tip, {className:"city-tip", direction:"top", offset:[0,-4], sticky:true});
-    const open = ()=>{ stopPlay(); showSpot(s); };
+    const open = ()=>{ if(addMode) return; stopPlay(); showSpot(s); };
     const hov = ()=>{
       // 悬停时按当前时间轴位置刷新提示内容
       const v = curVal(s.daily);
@@ -516,17 +539,50 @@ function init(){
     spotLayer.addLayer(halo);
     spotLayer.addLayer(m);
     spotMarkers.push({m, halo, s});
-  });
+  }
+  SPOTS.forEach(addSpotMarker);
   function applySpotRadii(){
     const p1 = map.containerPointToLatLng([0,0]);
     const p2 = map.containerPointToLatLng([1,0]);
     const mpp = Math.max(1, p1.distanceTo(p2));   // 米/像素
-    const inner = Math.max(4000, mpp*2);
+    const inner = 8000;   // 纯地理半径（试验：取消 2px 像素下限）
     const outer = inner + mpp*1.6;   // 外框紧贴圆点，间距固定约1.6px
-    spotMarkers.forEach(({m, halo})=>{ m.setRadius(inner); halo.setRadius(outer); });
+    spotMarkers.forEach(({m, halo})=>{ m.setRadius(outer); halo.setRadius(outer); });   // 填充直达白色外圈
   }
   map.on("zoomend", applySpotRadii);
   applySpotRadii();
+  /* 地图点击：选点模式下添加地点，否则点击空白处才清除高亮描边 */
+  map.on("click", (e)=>{
+    if(addMode){ openAddPopup(e.latlng); return; }
+    if(!justSelected) clearHighlight();
+  });
+
+  /* ---------- 地图点选添加地点 ---------- */
+  const addPointBtn = document.getElementById("addPointBtn");
+  function setAddMode(on){
+    addMode = on;
+    addPointBtn.classList.toggle("on", on);
+    document.getElementById("map").classList.toggle("pickcursor", on);
+    if(on) showMsg("选点模式已开启：点击地图任意位置添加地点");
+  }
+  addPointBtn.addEventListener("click", ()=> setAddMode(!addMode));
+  function openAddPopup(latlng){
+    const pop = L.popup({closeButton:true, autoClose:false, closeOnClick:false})
+      .setLatLng(latlng)
+      .setContent(`<div class="addpt-pop"><input id="addPtName" placeholder="输入地点名称" maxlength="20"><button id="addPtOk">添加</button></div>`)
+      .openOn(map);
+    const inp = document.getElementById("addPtName");
+    inp.focus();
+    const submit = ()=>{
+      const nm = inp.value.trim() || "自定义地点";
+      map.closePopup(pop);
+      setAddMode(false);
+      addCustomSpot({name:nm, latitude:latlng.lat, longitude:latlng.lng, admin1:"地图选点", country:""});
+    };
+    document.getElementById("addPtOk").addEventListener("click", submit);
+    inp.addEventListener("keydown", e=>{ if(e.key === "Enter") submit(); });
+    pop.on("remove", ()=> setAddMode(false));
+  }
   document.getElementById("spotToggle").addEventListener("change", e=>{
     e.target.checked ? map.addLayer(spotLayer) : map.removeLayer(spotLayer);
   });
@@ -544,7 +600,7 @@ function init(){
     }
   });
 
-  // 搜索：城市 + 景点
+  // 搜索：城市 + 地点
   const searchIndex = [
     ...DATA.cities.map(c=>({name:c.name, type:"city", lat:c.lat, lon:c.lon, cloud:c.cloud})),
     ...SPOTS.map(s=>({name:s.name, type:"spot", lat:s.lat, lon:s.lon, spot:s, cloud:s.daily}))
@@ -555,24 +611,198 @@ function init(){
   function renderSearch(q){
     sMatches = searchIndex.filter(x=>x.name.includes(q)).slice(0, 8);
     sActive = sMatches.length ? 0 : -1;
-    if(!sMatches.length){
-      sResults.innerHTML = `<div class="sr-empty">没有匹配“${q}”的地点</div>`;
-    } else {
+    let html = "";
+    if(sMatches.length){
       const day = Math.round(dayFloat);
-      sResults.innerHTML = sMatches.map((x,i)=>{
+      html = sMatches.map((x,i)=>{
         const v = x.cloud[Math.min(day, x.cloud.length-1)];
-        const tag = x.type === "spot" ? `<span class="tag spot">景点</span>` : `<span class="tag city">城市</span>`;
+        const tag = x.type === "spot" ? `<span class="tag spot">地点</span>` : `<span class="tag city">城市</span>`;
         return `<div class="sr-item${i===sActive?" active":""}" data-i="${i}">` +
                `<span>${x.name}</span>` +
                `<span style="display:flex;align-items:center;gap:6px">` +
                `<span class="sr-cloud">${v}% ${cloudWord(v)}</span>${tag}</span></div>`;
       }).join("");
-      sResults.querySelectorAll(".sr-item").forEach(el=>{
-        el.addEventListener("mousedown", e=>{ e.preventDefault(); gotoSearch(sMatches[+el.dataset.i]); });
-      });
     }
+    // 始终提供“添加为新地点”入口
+    const safeQ = q.replace(/[<>&"']/g, "");
+    html += `<div class="sr-item" data-add="1"><span style="color:#c2571a">＋ 将“${safeQ}”添加为新地点</span><span class="sr-cloud">实时抓取</span></div>`;
+    sResults.innerHTML = html;
+    sResults.querySelectorAll(".sr-item").forEach(el=>{
+      el.addEventListener("mousedown", e=>{
+        e.preventDefault();
+        if(el.dataset.add) addFlow(safeQ);
+        else gotoSearch(sMatches[+el.dataset.i]);
+      });
+    });
     sResults.style.display = "block";
   }
+  /* ---------- 自定义地点：地理搜索 → 实时抓天气 → 添加 ---------- */
+  async function fetchSpotWeather(lat, lon){
+    const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon +
+      "&daily=cloud_cover_mean&hourly=cloud_cover,weather_code,precipitation&timezone=Asia%2FShanghai" +
+      "&start_date=" + DATA.dates[0] + "&end_date=" + DATA.dates[DATA.dates.length-1];
+    const r = await fetch(url).then(x=>x.json());
+    return {
+      daily: r.daily.cloud_cover_mean.map(v=>Math.round(v)),
+      hourly: r.hourly.cloud_cover,
+      wcode: r.hourly.weather_code,
+      precip: r.hourly.precipitation.map(v=>Math.round(v*100)/100)
+    };
+  }
+  const badSources = new Set();   // 本次会话中失败过的地理数据源，之后直接跳过
+  /* Photon 结果类型分级：景区/公园/地貌/城镇村在前，建筑类噪声靠后 */
+  function tierOf(p){
+    const k = p.osm_key || "", v = p.osm_value || "";
+    if(k === "tourism" || k === "natural" || k === "leisure") return 0;
+    if(k === "place") return 0;
+    if(k === "boundary" && v !== "administrative") return 0;
+    if(k === "waterway" || k === "boundary") return 1;
+    return 2;
+  }
+  async function addFlow(q){
+    sMatches = []; sActive = -1;
+    const list = [], seen = new Set();
+    // 双关键词：「太平镇 成都」→ 名称词 + 地区词
+    const tokens = q.trim().split(/\s+/).filter(Boolean);
+    const nameKw = tokens[0];
+    const regionKw = tokens.length > 1 ? tokens[tokens.length-1] : "";
+    const eqFull = encodeURIComponent(q);
+    const eqName = encodeURIComponent(nameKw);
+    const clean = nm=>{
+      nm = (nm || "").trim();
+      const i = nm.indexOf(" ");
+      if(i > 0 && /[^一-龥＀-￿a-zA-Z0-9\s·\-()（）]/.test(nm.slice(i+1))) nm = nm.slice(0, i);
+      return nm;
+    };
+    const push = (name, lat, lon, region, tier)=>{
+      name = clean(name);
+      if(!name || lat == null || lon == null) return;
+      const key = name + "|" + (+lat).toFixed(2) + "|" + (+lon).toFixed(2);
+      if(seen.has(key)) return;
+      seen.add(key);
+      list.push({name, latitude:+lat, longitude:+lon, admin1:region || "", country:"", tier:tier || 0});
+    };
+    let pending = 0, settled = 0;
+    const render = ()=>{
+      const done = settled >= pending;
+      if(!list.length && !done){
+        sResults.innerHTML = `<div class="sr-empty">正在搜索“${nameKw}”…</div>`;
+        sResults.style.display = "block";
+        return;
+      }
+      if(!list.length && done){
+        sResults.innerHTML = `<div class="sr-empty">未找到“${q}”，换个名称试试，或用左上角「＋ 地图选点」直接在地图上添加</div>`;
+        return;
+      }
+      // 地区词匹配的排最前，其次按类型降噪排序；最多显示 20 条（下拉框可滚动）
+      const ranked = [...list].sort((a,b)=>{
+        if(regionKw){
+          const am = (a.admin1 || "").includes(regionKw) ? 0 : 1;
+          const bm = (b.admin1 || "").includes(regionKw) ? 0 : 1;
+          if(am !== bm) return am - bm;
+        }
+        return a.tier - b.tier;
+      }).slice(0, 20);
+      const status = done
+        ? `<div class="sr-empty">选择要添加的地点（共 ${list.length} 条候选）：</div>`
+        : `<div class="sr-empty">仍在搜索更多地点…</div>`;
+      sResults.innerHTML = status + ranked.map((g,i)=>
+        `<div class="sr-item" data-gi="${i}"><span>${g.name}</span>` +
+        `<span class="sr-cloud">${g.admin1 || ""}</span></div>`).join("");
+      sResults.querySelectorAll(".sr-item[data-gi]").forEach(el=>{
+        el.addEventListener("mousedown", e=>{ e.preventDefault(); addCustomSpot(ranked[+el.dataset.gi]); });
+      });
+      sResults.style.display = "block";
+    };
+    // 带超时的 fetch：超时主动掐断，避免不可达源长时间挂起
+    const timedFetch = (url, ms)=>{
+      const ctl = new AbortController();
+      const t = setTimeout(()=>ctl.abort(), ms);
+      return fetch(url, {signal:ctl.signal}).finally(()=>clearTimeout(t));
+    };
+    const jobs = [];
+    // 源1：Photon（OSM 数据，景区/镇县覆盖好，原生支持「地名+地区」组合查询）
+    if(!badSources.has("photon")){
+      pending++;
+      jobs.push(timedFetch("https://photon.komoot.io/api?q=" + eqFull + "&limit=15&bbox=73,17.5,135,53.7", 8000)
+        .then(r=>r.json())
+        .then(d=>{
+          (d.features || [])
+            .filter(f=>["highway","railway","aeroway"].indexOf((f.properties||{}).osm_key||"") < 0)
+            .forEach(f=>{
+              const p = f.properties || {};
+              const region = [clean(p.state), clean(p.county || p.city || p.district)].filter(Boolean).join(" · ");
+              push(p.name, f.geometry.coordinates[1], f.geometry.coordinates[0], region, tierOf(p));
+            });
+        })
+        .catch(()=>{ badSources.add("photon"); })
+        .then(()=>{ settled++; render(); }));
+    }
+    // 源2：GeoNames（乡镇/居民点，经 Open-Meteo；不支持组合查询，只发名称词）
+    if(!badSources.has("geonames")){
+      pending++;
+      jobs.push(timedFetch("https://geocoding-api.open-meteo.com/v1/search?name=" + eqName + "&count=10&language=zh&format=json", 8000)
+        .then(r=>r.json())
+        .then(res=>{
+          (res.results || []).forEach(g=>
+            push(g.name, g.latitude, g.longitude, [g.admin1, g.country].filter(Boolean).join(" · "), 1));
+        })
+        .catch(()=>{ badSources.add("geonames"); })
+        .then(()=>{ settled++; render(); }));
+    }
+    if(!pending){
+      sResults.innerHTML = `<div class="sr-empty">地理搜索服务暂不可用，请用左上角「＋ 地图选点」添加</div>`;
+      sResults.style.display = "block";
+      return;
+    }
+    render();   // 立即显示“正在搜索”，之后各源随到随显
+    await Promise.allSettled(jobs);
+  }
+  async function addCustomSpot(g){
+    sResults.innerHTML = `<div class="sr-empty">正在抓取「${g.name}」的天气数据…</div>`;
+    showMsg(`正在抓取「${g.name}」的天气数据…`);
+    let w;
+    try{ w = await fetchSpotWeather(g.latitude, g.longitude); }
+    catch(e){
+      sResults.innerHTML = `<div class="sr-empty">天气抓取失败，请稍后重试</div>`;
+      showMsg("天气抓取失败，请稍后重试");
+      return;
+    }
+    let name = g.name;
+    if(searchIndex.some(x=>x.name === name)) name = `${g.name}（${g.admin1 || g.country || "自定义"}）`;
+    const s = { name, lon:g.longitude, lat:g.latitude, ...w, custom:true };
+    SPOTS.push(s);
+    addSpotMarker(s);
+    applySpotRadii();
+    searchIndex.push({name:s.name, type:"spot", lat:s.lat, lon:s.lon, spot:s, cloud:s.daily});
+    saveCustomSpots();
+    sInput.value = ""; sResults.style.display = "none"; sInput.blur();
+    stopPlay();
+    map.flyTo([s.lat, s.lon], 7, {duration:0.8});
+    showSpot(s);
+  }
+  function saveCustomSpots(){
+    try{
+      localStorage.setItem("customSpots", JSON.stringify(
+        SPOTS.filter(s=>s.custom).map(s=>({name:s.name, lat:s.lat, lon:s.lon}))
+      ));
+    }catch(e){}
+  }
+  // 恢复本浏览器保存的自定义地点（按当前日期窗口重新抓取数据）
+  (async ()=>{
+    let saved = [];
+    try{ saved = JSON.parse(localStorage.getItem("customSpots") || "[]"); }catch(e){}
+    for(const c of saved){
+      try{
+        const w = await fetchSpotWeather(c.lat, c.lon);
+        const s = { name:c.name, lat:c.lat, lon:c.lon, ...w, custom:true };
+        SPOTS.push(s);
+        addSpotMarker(s);
+        searchIndex.push({name:s.name, type:"spot", lat:s.lat, lon:s.lon, spot:s, cloud:s.daily});
+      }catch(e){}
+    }
+    applySpotRadii();
+  })();
   function gotoSearch(x){
     stopPlay();
     map.flyTo([x.lat, x.lon], 6.5, {duration:0.8});
@@ -621,12 +851,24 @@ function init(){
   document.getElementById("playBtn").addEventListener("click", togglePlay);
   document.getElementById("cityClose").addEventListener("click", closeCity);
   document.getElementById("spotClose").addEventListener("click", closeSpot);
+  document.getElementById("spotDel").addEventListener("click", ()=>{
+    const s = selectedSpot;
+    if(!s || !s.custom) return;
+    const rec = spotMarkers.find(x=>x.s === s);
+    if(rec){ spotLayer.removeLayer(rec.m); spotLayer.removeLayer(rec.halo); }
+    spotMarkers = spotMarkers.filter(x=>x.s !== s);
+    SPOTS = SPOTS.filter(x=>x !== s);
+    for(let i = searchIndex.length-1; i >= 0; i--) if(searchIndex[i].spot === s) searchIndex.splice(i,1);
+    if(rec && selectedSpotMarker === rec.m) selectedSpotMarker = null;
+    saveCustomSpots();
+    closeSpot();
+  });
   document.getElementById("ovClose").addEventListener("click", ()=>{
     document.querySelector(".panel").style.display = "none";
     document.getElementById("panelToggle").checked = false;
   });
   render(0);
-  // 支持 #城市名 或 #spot:景点名 直接打开详情
+  // 支持 #城市名 或 #spot:地点名 直接打开详情
   const h = decodeURIComponent(location.hash.slice(1));
   if(h.startsWith("spot:")){
     const sn = h.slice(5);
@@ -635,12 +877,35 @@ function init(){
   } else if(h && cloudByName[h]) showCity(h, cloudByName[h]);
 }
 
+function showMsg(t){
+  let el = document.getElementById("toast");
+  if(!el){ el = document.createElement("div"); el.id = "toast"; el.className = "toast"; document.body.appendChild(el); }
+  el.textContent = t;
+  el.classList.add("show");
+  clearTimeout(showMsg._t);
+  showMsg._t = setTimeout(()=>el.classList.remove("show"), 3200);
+}
 function openPanel(){
   document.querySelector(".panel").style.display = "";
 }
 
+/* ---------- 选中高亮（独立顶层描边层） ---------- */
+function setCityHighlight(feature){
+  if(hlLayer){ map.removeLayer(hlLayer); hlLayer = null; }
+  if(feature) hlLayer = L.geoJSON(feature, {
+    pane:"hlPane",
+    style:{ color:"#FF5F1F", weight:2.5, fill:false, fillOpacity:0 },
+    interactive:false
+  }).addTo(map);
+}
+function clearHighlight(){
+  if(hlLayer){ map.removeLayer(hlLayer); hlLayer = null; }
+  selectedLayer = null;
+  if(selectedSpotMarker){ selectedSpotMarker.setStyle({color:"rgba(0,0,0,0)", weight:0}); selectedSpotMarker = null; }
+}
+
 /* ---------- 悬停联动图例指示标 ---------- */
-let hoverCloud = null;   // 当前悬停对象的 daily 云量数组（城市或景点）
+let hoverCloud = null;   // 当前悬停对象的 daily 云量数组（城市或地点）
 /* 当前时间轴位置（含播放插值）对应的数值 */
 function curVal(arr){
   const i0 = Math.floor(dayFloat), i1 = Math.min(i0+1, DATA.dates.length-1), t = dayFloat - i0;
@@ -660,9 +925,9 @@ function refreshLegendInd(){
 /* ---------- 城市详情 ---------- */
 function showCity(name, cloud){
   openPanel();
-  // 关闭景点视图
+  // 关闭地点视图
   selectedSpot = null;
-  if(selectedSpotMarker){ selectedSpotMarker.setStyle({color:"rgba(17,17,17,.7)", weight:0.8}); selectedSpotMarker = null; }
+  if(selectedSpotMarker){ selectedSpotMarker.setStyle({color:"rgba(0,0,0,0)", weight:0}); selectedSpotMarker = null; }
   document.getElementById("spotView").style.display = "none";
   const c = DATA.cities.find(x=>x.name===name) || {name, cloud};
   selectedCity = c;
@@ -713,7 +978,8 @@ function showCity(name, cloud){
   if(selectedLayer) selectedLayer.setStyle({weight:0.6, color:"rgba(255,255,255,.85)"});
   const hit = areas.find(a=>a.name === name);
   selectedLayer = hit ? hit.layer : null;
-  if(selectedLayer){ selectedLayer.setStyle({weight:2, color:"#FF5F1F"}); selectedLayer.bringToFront(); }
+  setCityHighlight(hit ? hit.feature : null);
+  justSelected = true; setTimeout(()=>{ justSelected = false; }, 100);
   markBar(Math.round(dayFloat));
 }
 function closeCity(){
@@ -735,19 +1001,21 @@ function markBar(day){
     `${fmtD(day)} · ${wtext(c.wcode[day])} · 云量 ${c.cloud[day]}% · 降水 ${c.precip[day]}mm`;
 }
 
-/* ---------- 景点详情 ---------- */
+/* ---------- 地点详情 ---------- */
 function showSpot(s){
   openPanel();
   // 关闭城市视图
   selectedCity = null;
   if(selectedLayer){ selectedLayer.setStyle({weight:0.6, color:"rgba(255,255,255,.85)"}); selectedLayer = null; }
+  if(hlLayer){ map.removeLayer(hlLayer); hlLayer = null; }
   document.getElementById("cityView").style.display = "none";
-  // 高亮选中景点
-  if(selectedSpotMarker) selectedSpotMarker.setStyle({color:"rgba(17,17,17,.7)", weight:0.8});
+  // 高亮选中地点
+  if(selectedSpotMarker) selectedSpotMarker.setStyle({color:"rgba(0,0,0,0)", weight:0});
   selectedSpotMarker = (spotMarkers.find(x=>x.s === s)||{}).m || null;
   if(selectedSpotMarker){ selectedSpotMarker.setStyle({color:"#FF5F1F", weight:2.5}); selectedSpotMarker.bringToFront(); }
   selectedSpot = s;
   document.getElementById("spotName").textContent = s.name;
+  document.getElementById("spotDel").style.display = s.custom ? "" : "none";
   // 推荐游玩日期：云量低 + 降水少 综合评分，取前3天
   const scored = s.daily.map((v,i)=>({i, v, p: dayPrecipSpot(s,i)}));
   scored.forEach(x=> x.score = x.v + Math.min(15, x.p)*6);
@@ -799,7 +1067,7 @@ function showSpot(s){
 }
 function closeSpot(){
   selectedSpot = null;
-  if(selectedSpotMarker){ selectedSpotMarker.setStyle({color:"rgba(17,17,17,.7)", weight:0.8}); selectedSpotMarker = null; }
+  // 保留地图上的高亮描边，直到点击地图空白处或选择其他地点
   document.getElementById("spotView").style.display = "none";
   if(document.getElementById("panelToggle").checked){
     document.getElementById("overviewView").style.display = "block";
